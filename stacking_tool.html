@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Tower stacking tool</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css" />
+<style>
+  :root {
+    --surface-0: #f5f4f0; --surface-1: #ffffff; --surface-2: #ffffff;
+    --text-primary: #1a1a18; --text-secondary: #5f5e5a; --text-muted: #888780; --text-danger: #a32d2d;
+    --border: #e3e1d8; --border-strong: #cfccc0; --border-accent: #185fa5;
+    --radius: 8px; --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-0: #17171a; --surface-1: #1f2024; --surface-2: #24252a;
+      --text-primary: #f0efe9; --text-secondary: #b4b2a9; --text-muted: #7a7973;
+      --border: #33343a; --border-strong: #45464d; --border-accent: #5ea0f0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: var(--font-sans); background: var(--surface-0); color: var(--text-primary); margin:0; padding: 24px; line-height:1.5; }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
+  p.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+  .card { background: var(--surface-1); border: 0.5px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  label { font-size: 13px; color: var(--text-secondary); }
+  select, input[type=number], input[type=text] { background: var(--surface-2); color: var(--text-primary); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 6px 8px; font-size: 13px; }
+  button { background: var(--surface-2); color: var(--text-primary); border: 0.5px solid var(--border-strong); border-radius: var(--radius); padding: 7px 12px; font-size: 13px; cursor: pointer; }
+  button:hover { background: var(--surface-0); }
+  button.primary { border: 2px solid var(--border-accent); }
+  button.icon-btn { width: 28px; height: 28px; padding: 0; display:flex; align-items:center; justify-content:center; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
+  .row:last-child { border-bottom: none; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 12px; background: var(--surface-0); color: var(--text-secondary); }
+  .step { display: none; }
+  .step.active { display: block; }
+  .stepper { display:flex; gap:6px; margin-bottom: 20px; font-size:12px; color: var(--text-muted); }
+  .stepper span.on { color: var(--text-primary); font-weight: 500; }
+  .option-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .option-grid { grid-template-columns: 1fr; } }
+  .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Tower stacking tool</h1>
+  <p class="sub">Import unit inventory from Claude, propose a stacking order and bands, generate three starting options, refine the one you like, export your decisions.</p>
+  <div class="stepper">
+    <span id="s1">1. Setup</span> &rarr; <span id="s2">2. Three options</span> &rarr; <span id="s3">3. Refine</span> &rarr; <span id="s4">4. Export</span>
+  </div>
+
+  <div class="step active" id="step-setup">
+    <div class="card">
+      <h2>Import inventory</h2>
+      <p class="sub">Upload the programs.json exported from Claude, or start from the Seoul example already loaded.</p>
+      <input type="file" id="file-input" accept="application/json" />
+    </div>
+    <div class="card">
+      <h2>Programs</h2>
+      <div id="program-rows"></div>
+    </div>
+    <div class="card">
+      <label>Efficiency (NIA / GFA) applied to all unit-tiled programs</label><br/>
+      <input type="number" id="efficiency-input" min="0.3" max="1" step="0.01" style="width:80px; margin-top:6px;" />
+    </div>
+    <button class="primary" id="generate-btn">Generate 3 options &rarr;</button>
+  </div>
+
+  <div class="step" id="step-options">
+    <div class="option-grid" id="options-grid"></div>
+    <button id="back-to-setup">&larr; Back to setup</button>
+  </div>
+
+  <div class="step" id="step-refine">
+    <div class="card">
+      <div style="display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:200px;">
+          <label>Program (unit-tiled only)</label><br/>
+          <select id="refine-program-select" style="width:100%; margin-top:4px;"></select>
+        </div>
+        <div style="width:110px;">
+          <label>Floors</label><br/>
+          <input type="number" id="refine-floors-input" min="1" max="20" style="width:100%; margin-top:4px;" />
+        </div>
+      </div>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <input type="checkbox" id="refine-monotonic-toggle" checked />
+        Enforce non-increasing floor plate within this program's own floors
+      </label>
+      <div style="font-size:13px; color:var(--text-secondary); margin-bottom:6px;">Compare methods (full inventory, no locks)</div>
+      <div id="refine-compare-row" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:16px;"></div>
+      <div id="refine-floor-rows"></div>
+      <div style="display:flex; justify-content:space-between; margin-top:12px; padding-top:12px; border-top:0.5px solid var(--border);">
+        <span id="refine-flex-note" class="pill"></span>
+        <button id="refine-reset-locks">Reset locks</button>
+      </div>
+    </div>
+    <button id="back-to-options">&larr; Back to options</button>
+    <button class="primary" id="to-export">Done with this program, review export &rarr;</button>
+  </div>
+
+  <div class="step" id="step-export">
+    <div class="card">
+      <h2>Decisions so far</h2>
+      <div id="export-summary"></div>
+    </div>
+    <button id="download-json" class="primary">Download decisions.json</button>
+    <button id="back-to-refine">&larr; Keep refining</button>
+  </div>
+</div>
+
+<script>
+const seoulExample = {
+  efficiency: 0.70,
+  programs: [
+    { name: "Spa + amenities", targetArea: 1502, naturalGFA: 1036, unitTiled: false },
+    { name: "Hotel keys + club + support", targetArea: 8530, naturalGFA: 2500, unitTiled: true, flex: "Type A, Deluxe", units: [
+      {name:"Type A, Deluxe", qty:56, area:85}, {name:"Type B, Junior Suite", qty:6, area:110},
+      {name:"Type C, Suite", qty:2, area:180}, {name:"Type D, Aman Suite", qty:1, area:500},
+      {name:"Club 1BR", qty:8, area:110}, {name:"Club 2BR", qty:2, area:240}, {name:"Club 3BR", qty:1, area:500} ] },
+    { name: "Aman Club", targetArea: 1360, naturalGFA: 1393, unitTiled: false },
+    { name: "Officetel (2BR)", targetArea: 2917, naturalGFA: 1179, unitTiled: true, flex: "2 Bedroom", units: [
+      {name:"2 Bedroom", qty:12, area:243} ] },
+    { name: "Sky garden", targetArea: 322, naturalGFA: 245, unitTiled: false },
+    { name: "Residence (3BR+4BR)", targetArea: 10385, naturalGFA: 1500, unitTiled: true, flex: "3 Bedroom", units: [
+      {name:"3 Bedroom", qty:17, area:371}, {name:"4 Bedroom", qty:8, area:510} ] },
+    { name: "Penthouse", targetArea: 1013, naturalGFA: 1071, unitTiled: true, flex: "6BR Penthouse", units: [
+      {name:"6BR Penthouse", qty:1, area:1013} ] },
+  ]
+};
+
+let state = {
+  efficiency: seoulExample.efficiency,
+  programs: seoulExample.programs.map((p, i) => ({
+    ...p, order: i + 1, band: null, exemptFromTaper: !p.unitTiled, locked: false,
+  })),
+  options: null,
+  chosenOption: null,
+  refine: { program: null, floors: 7, method: "compensated", locked: {}, monotonic: true },
+  decisions: {},
+};
+
+// ---------- core strategy functions (tested standalone before this file existed) ----------
+function enforceMonotonic(programsByOrderAsc, key) {
+  let prev = Infinity;
+  return programsByOrderAsc.map(p => {
+    if (p.exemptFromTaper) return { ...p };
+    const v = p.locked ? p[key] : Math.min(p[key], prev);
+    prev = v;
+    return { ...p, [key]: v };
+  });
+}
+function strategyReferenceCalibrated(programs) {
+  const byBand = {};
+  for (const p of programs) {
+    if (!p.band) continue;
+    byBand[p.band] = byBand[p.band] || { tw: 0, w: 0 };
+    const w = p.targetArea || 1;
+    byBand[p.band].tw += p.naturalGFA * w;
+    byBand[p.band].w += w;
+  }
+  const avg = {};
+  for (const b in byBand) avg[b] = byBand[b].tw / byBand[b].w;
+  const withVal = programs.map(p => ({ ...p, proposedGFA: p.locked ? p.naturalGFA : (p.band ? avg[p.band] : p.naturalGFA) }));
+  return enforceMonotonic([...withVal].sort((a,b)=>a.order-b.order), "proposedGFA");
+}
+function strategyLinearTaper(programs) {
+  const sorted = [...programs].sort((a,b)=>a.order-b.order);
+  const n = sorted.length;
+  const maxV = Math.max(...programs.map(p=>p.naturalGFA)), minV = Math.min(...programs.map(p=>p.naturalGFA));
+  const withVal = sorted.map((p,i)=>({ ...p, proposedGFA: p.locked ? p.naturalGFA : (n===1?maxV:maxV-(maxV-minV)*(i/(n-1))) }));
+  return enforceMonotonic(withVal, "proposedGFA");
+}
+function strategyDataFirst(programs) {
+  const sorted = [...programs].sort((a,b)=>a.order-b.order);
+  return enforceMonotonic(sorted.map(p=>({ ...p, proposedGFA: p.naturalGFA })), "proposedGFA");
+}
+function generateThreeOptions(programs) {
+  return {
+    reference_calibrated: { label: "Reference-calibrated", desc: "Programs sharing a band converge toward that band's weighted-average floor plate.", result: strategyReferenceCalibrated(programs) },
+    linear_taper: { label: "Linear taper", desc: "One straight line from the biggest to the smallest, by stacking position only -- bands ignored.", result: strategyLinearTaper(programs) },
+    data_first: { label: "Data-first", desc: "Each program keeps its own best-fit floor plate; only clamped where it would otherwise exceed the floor below.", result: strategyDataFirst(programs) },
+  };
+}
+
+// ---------- unit-mix methods (same as the tested method picker) ----------
+function balanced(units, n) {
+  const floors = Array.from({length:n}, () => ({mix:{}, nia:0}));
+  const sorted = [...units].sort((a,b)=>b.area-a.area);
+  for (const u of sorted) {
+    const base = Math.floor(u.qty/n), rem = u.qty - base*n;
+    if (base) for (const f of floors) { f.mix[u.name]=(f.mix[u.name]||0)+base; f.nia+=base*u.area; }
+    const order = floors.map((f,i)=>i).sort((a,b)=>floors[a].nia-floors[b].nia);
+    for (let k=0;k<rem;k++){ const i=order[k]; floors[i].mix[u.name]=(floors[i].mix[u.name]||0)+1; floors[i].nia+=u.area; }
+  }
+  return floors;
+}
+function sequential(units, n) {
+  const total = units.reduce((s,u)=>s+u.qty*u.area,0);
+  const target = total/n || 1;
+  const floors = Array.from({length:n}, () => ({mix:{}, nia:0}));
+  let ptr = 0;
+  const sorted = [...units].sort((a,b)=>b.area-a.area);
+  for (const u of sorted) {
+    let remaining = u.qty;
+    while (remaining > 0) {
+      let take;
+      if (ptr >= n-1) take = remaining;
+      else { const room = Math.max(0, target-floors[ptr].nia); take = Math.min(remaining, Math.max(1, Math.round(room/u.area))); }
+      floors[ptr].mix[u.name] = (floors[ptr].mix[u.name]||0)+take;
+      floors[ptr].nia += take*u.area;
+      remaining -= take;
+      if (ptr < n-1 && floors[ptr].nia >= target*0.97) ptr++;
+    }
+  }
+  return floors;
+}
+function featureIsolation(units, n) {
+  const rare = units.filter(u=>u.qty<n), common = units.filter(u=>u.qty>=n);
+  const floors = Array.from({length:n}, () => ({mix:{}, nia:0}));
+  for (const u of rare) { floors[0].mix[u.name]=u.qty; floors[0].nia+=u.qty*u.area; }
+  const rest = [...Array(n).keys()].slice(1);
+  if (rest.length === 0) return floors;
+  const sorted = [...common].sort((a,b)=>b.area-a.area);
+  for (const u of sorted) {
+    const base = Math.floor(u.qty/rest.length), rem = u.qty-base*rest.length;
+    if (base) for (const i of rest) { floors[i].mix[u.name]=(floors[i].mix[u.name]||0)+base; floors[i].nia+=base*u.area; }
+    const order = [...rest].sort((a,b)=>floors[a].nia-floors[b].nia);
+    for (let k=0;k<rem;k++){ const i=order[k]; floors[i].mix[u.name]=(floors[i].mix[u.name]||0)+1; floors[i].nia+=u.area; }
+  }
+  return floors;
+}
+function compensated(units, n, flexName) {
+  const rare = units.filter(u=>u.qty<n), common = units.filter(u=>u.qty>=n);
+  const flexUnit = units.find(u=>u.name===flexName) || units[0];
+  const floors = balanced(common.length ? common : units, n);
+  const sorted = [...rare].sort((a,b)=>b.area-a.area);
+  for (const u of sorted) {
+    let ti=0, mn=Infinity;
+    floors.forEach((f,i)=>{ if (f.nia<mn){mn=f.nia; ti=i;} });
+    floors[ti].mix[u.name] = (floors[ti].mix[u.name]||0)+u.qty;
+    const added = u.qty*u.area;
+    let removeN = Math.min(Math.round(added/flexUnit.area), floors[ti].mix[flexUnit.name]||0);
+    floors[ti].mix[flexUnit.name] = (floors[ti].mix[flexUnit.name]||0)-removeN;
+    floors[ti].nia += added - removeN*flexUnit.area;
+    for (let k=0;k<removeN;k++){
+      let mi=0, mn2=Infinity;
+      floors.forEach((f,i)=>{ if (f.nia<mn2){mn2=f.nia; mi=i;} });
+      floors[mi].mix[flexUnit.name] = (floors[mi].mix[flexUnit.name]||0)+1;
+      floors[mi].nia += flexUnit.area;
+    }
+  }
+  return floors;
+}
+const methods = {balanced, sequential, feature: featureIsolation, compensated};
+const methodLabels = {balanced:"Balanced", sequential:"Sequential fill", feature:"Feature isolation", compensated:"Compensated"};
+
+// ---------- screen navigation ----------
+function showStep(id) {
+  document.querySelectorAll(".step").forEach(el => el.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+  document.querySelectorAll(".stepper span").forEach(el => el.classList.remove("on"));
+  const map = {"step-setup":"s1", "step-options":"s2", "step-refine":"s3", "step-export":"s4"};
+  document.getElementById(map[id]).classList.add("on");
+}
+
+// ---------- Screen 1: setup ----------
+function renderSetup() {
+  document.getElementById("efficiency-input").value = state.efficiency;
+  const rowsEl = document.getElementById("program-rows");
+  rowsEl.innerHTML = "";
+  const sorted = [...state.programs].sort((a,b)=>a.order-b.order);
+  sorted.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        <button class="icon-btn" data-name="${p.name}" data-dir="up" ${i===0?'disabled':''}><i class="ti ti-chevron-up" aria-hidden="true"></i></button>
+        <button class="icon-btn" data-name="${p.name}" data-dir="down" ${i===sorted.length-1?'disabled':''}><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
+      </div>
+      <div style="flex:1;">
+        <div style="font-weight:500;">${p.name}</div>
+        <div style="color:var(--text-secondary); font-size:12px;">Target ${Math.round(p.targetArea).toLocaleString()} sqm NIA &middot; natural GFA/floor ${Math.round(p.naturalGFA).toLocaleString()} sqm ${p.unitTiled?'':'&middot; not unit-tiled'}</div>
+      </div>
+      <select data-name="${p.name}" class="band-select" style="width:100px;">
+        <option value="">No band</option>
+        <option value="Band 1">Band 1</option>
+        <option value="Band 2">Band 2</option>
+        <option value="Band 3">Band 3</option>
+      </select>
+      <label style="display:flex; align-items:center; gap:4px; font-size:12px; width:90px;">
+        <input type="checkbox" data-name="${p.name}" class="exempt-check" ${p.exemptFromTaper?'checked':''} /> exempt
+      </label>
+    `;
+    row.querySelector(`.band-select[data-name="${p.name}"]`).value = p.band || "";
+    rowsEl.appendChild(row);
+  });
+  rowsEl.querySelectorAll(".icon-btn").forEach(btn => {
+    btn.onclick = () => {
+      const name = btn.dataset.name, dir = btn.dataset.dir;
+      const arr = [...state.programs].sort((a,b)=>a.order-b.order);
+      const idx = arr.findIndex(p=>p.name===name);
+      const swapIdx = dir==="up" ? idx-1 : idx+1;
+      if (swapIdx<0 || swapIdx>=arr.length) return;
+      const tmp = arr[idx].order; arr[idx].order = arr[swapIdx].order; arr[swapIdx].order = tmp;
+      state.programs = arr;
+      renderSetup();
+    };
+  });
+  rowsEl.querySelectorAll(".band-select").forEach(sel => {
+    sel.onchange = () => { state.programs.find(p=>p.name===sel.dataset.name).band = sel.value || null; };
+  });
+  rowsEl.querySelectorAll(".exempt-check").forEach(chk => {
+    chk.onchange = () => { state.programs.find(p=>p.name===chk.dataset.name).exemptFromTaper = chk.checked; };
+  });
+}
+document.getElementById("efficiency-input").onchange = (e) => { state.efficiency = +e.target.value || 0.7; };
+document.getElementById("file-input").onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      state.efficiency = data.efficiency || 0.7;
+      state.programs = data.programs.map((p, i) => ({ ...p, order:i+1, band:null, exemptFromTaper: !p.unitTiled, locked:false }));
+      renderSetup();
+    } catch (err) { alert("Could not read that file as JSON: " + err.message); }
+  };
+  reader.readAsText(file);
+};
+document.getElementById("generate-btn").onclick = () => {
+  state.options = generateThreeOptions(state.programs);
+  renderOptions();
+  showStep("step-options");
+};
+
+// ---------- Screen 2: three options ----------
+function renderOptions() {
+  const grid = document.getElementById("options-grid");
+  grid.innerHTML = "";
+  Object.entries(state.options).forEach(([key, opt]) => {
+    const sorted = [...opt.result].sort((a,b)=>a.order-b.order).reverse();
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <h2>${opt.label}</h2>
+      <p class="sub">${opt.desc}</p>
+      <div>${sorted.map(p=>`<div class="row"><span style="flex:1;">${p.name}</span><span class="mono">${Math.round(p.proposedGFA).toLocaleString()} sqm</span></div>`).join("")}</div>
+      <button class="primary" data-key="${key}" style="margin-top:10px; width:100%;">Refine this option &rarr;</button>
+    `;
+    card.querySelector("button").onclick = () => {
+      state.chosenOption = key;
+      const unitTiled = opt.result.filter(p=>p.unitTiled);
+      const sel = document.getElementById("refine-program-select");
+      sel.innerHTML = unitTiled.map(p=>`<option value="${p.name}">${p.name}</option>`).join("");
+      state.refine.program = unitTiled[0].name;
+      const chosen = unitTiled[0];
+      state.refine.floors = Math.max(1, Math.round(chosen.targetArea / (chosen.proposedGFA * state.efficiency)));
+      state.refine.locked = {};
+      document.getElementById("refine-floors-input").value = state.refine.floors;
+      renderRefine();
+      showStep("step-refine");
+    };
+    grid.appendChild(card);
+  });
+}
+document.getElementById("back-to-setup").onclick = () => showStep("step-setup");
+
+// ---------- Screen 3: refine (per-program unit mix) ----------
+function currentProgram() {
+  return state.options[state.chosenOption].result.find(p => p.name === state.refine.program);
+}
+function spreadOf(floors){ const nias=floors.map(f=>f.nia); return Math.round(Math.max(...nias)-Math.min(...nias)); }
+function renderRefine() {
+  const prog = currentProgram();
+  const n = state.refine.floors;
+
+  const compareRow = document.getElementById("refine-compare-row");
+  compareRow.innerHTML = "";
+  Object.keys(methods).forEach(key => {
+    const r = methods[key](prog.units, n, prog.flex);
+    const sp = spreadOf(r);
+    const div = document.createElement("div");
+    div.style.cssText = `border:${key===state.refine.method?'2px solid var(--border-accent)':'0.5px solid var(--border)'}; border-radius:var(--radius); padding:8px; cursor:pointer; text-align:center;`;
+    div.innerHTML = `<div style="font-size:12px; color:var(--text-secondary);">${methodLabels[key]}</div><div style="font-size:16px; font-weight:500; margin-top:2px;">${sp.toLocaleString()}</div>`;
+    div.onclick = () => { state.refine.method = key; renderRefine(); };
+    compareRow.appendChild(div);
+  });
+
+  const lockedIdxs = Object.keys(state.refine.locked).map(Number);
+  const lockedTotals = {};
+  for (const i of lockedIdxs) { const mix = state.refine.locked[i].mix; for (const nm in mix) lockedTotals[nm]=(lockedTotals[nm]||0)+mix[nm]; }
+  const remainingUnits = prog.units.map(u=>({...u, qty:u.qty-(lockedTotals[u.name]||0)})).filter(u=>u.qty>0);
+  const remainingFloors = n - lockedIdxs.length;
+  let computed = remainingFloors>0 && remainingUnits.length>0 ? methods[state.refine.method](remainingUnits, remainingFloors, prog.flex) : [];
+  if (state.refine.monotonic) computed = [...computed].sort((a,b)=>b.nia-a.nia);
+
+  const result = new Array(n);
+  for (const i of lockedIdxs) result[i] = state.refine.locked[i];
+  let ci=0;
+  for (let i=0;i<n;i++){ if (!result[i]) { result[i] = computed[ci] || {mix:{}, nia:0}; ci++; } }
+
+  const rowsEl = document.getElementById("refine-floor-rows");
+  rowsEl.innerHTML = "";
+  result.forEach((f,i) => {
+    const isLocked = !!state.refine.locked[i];
+    const mixText = Object.entries(f.mix).filter(([,v])=>v>0).map(([k,v])=>`${v}x ${k}`).join(", ") || "(empty)";
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `
+      <button class="icon-btn" data-i="${i}"><i class="ti ${isLocked?'ti-lock':'ti-lock-open'}" aria-hidden="true"></i></button>
+      <div style="width:56px; font-weight:500;">Floor ${i+1}</div>
+      <div style="flex:1; color:var(--text-secondary);">${mixText}</div>
+      <div style="width:90px; text-align:right; font-weight:500;">${Math.round(f.nia).toLocaleString()} sqm</div>
+    `;
+    rowsEl.appendChild(row);
+  });
+  rowsEl.querySelectorAll(".icon-btn").forEach(btn => {
+    btn.onclick = () => { const i=+btn.dataset.i; if (state.refine.locked[i]) delete state.refine.locked[i]; else state.refine.locked[i]=result[i]; renderRefine(); };
+  });
+  document.getElementById("refine-flex-note").textContent = `Flex unit: ${prog.flex}`;
+
+  state.decisions[prog.name] = { floors: n, method: state.refine.method, monotonic: state.refine.monotonic, floorMix: result };
+}
+document.getElementById("refine-program-select").onchange = (e) => {
+  state.refine.program = e.target.value;
+  const prog = currentProgram();
+  state.refine.floors = Math.max(1, Math.round(prog.targetArea / (prog.proposedGFA * state.efficiency)));
+  document.getElementById("refine-floors-input").value = state.refine.floors;
+  state.refine.locked = {};
+  renderRefine();
+};
+document.getElementById("refine-floors-input").onchange = (e) => {
+  state.refine.floors = Math.max(1, Math.round(+e.target.value || 1));
+  state.refine.locked = {};
+  renderRefine();
+};
+document.getElementById("refine-monotonic-toggle").onchange = (e) => { state.refine.monotonic = e.target.checked; renderRefine(); };
+document.getElementById("refine-reset-locks").onclick = () => { state.refine.locked = {}; renderRefine(); };
+document.getElementById("back-to-options").onclick = () => showStep("step-options");
+document.getElementById("to-export").onclick = () => { renderExport(); showStep("step-export"); };
+
+// ---------- Screen 4: export ----------
+function renderExport() {
+  const el = document.getElementById("export-summary");
+  const names = Object.keys(state.decisions);
+  if (!names.length) { el.innerHTML = `<p class="sub">No programs refined yet.</p>`; return; }
+  el.innerHTML = names.map(name => {
+    const d = state.decisions[name];
+    return `<div class="row"><span style="flex:1;">${name}</span><span class="pill">${d.floors} floors &middot; ${methodLabels[d.method]}</span></div>`;
+  }).join("");
+}
+document.getElementById("download-json").onclick = () => {
+  const payload = {
+    stackOrder: [...state.programs].sort((a,b)=>a.order-b.order).map(p=>p.name),
+    chosenStrategy: state.chosenOption,
+    efficiency: state.efficiency,
+    decisions: state.decisions,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "decisions.json";
+  a.click();
+};
+document.getElementById("back-to-refine").onclick = () => showStep("step-refine");
+
+renderSetup();
+</script>
+</body>
+</html>
